@@ -112,10 +112,14 @@ def apply_event(event_id):
             .filter(pk__in=[event.attacker_id, event.defender_id])
             .order_by('pk')
         )
-        if any(person.health == 0 for person in fighters):
+        dead = {person.pk for person in fighters if person.health == 0}
+        if dead:
             FightEvent.objects.filter(
                 fight_id=event.fight_id, order__gte=event.order, status=FightEvent.Status.PENDING
             ).update(status=FightEvent.Status.SKIPPED)
+            Fight.objects.filter(pk=event.fight_id).update(
+                winner_id=stopped_winner(event.fight, event.order, dead)
+            )
             return False
         defender = Person.objects.filter(pk=event.defender_id)
         defender.update(health=Greatest(F('health') - event.damage, 0))
@@ -125,13 +129,35 @@ def apply_event(event_id):
         return True
 
 
-def fight_winner(fight):
-    totals = list(
-        fight.events.values('attacker').annotate(total=Sum('damage')).order_by('-total')
+def damage_winner(fight):
+    totals = dict(
+        fight.events.filter(status=FightEvent.Status.APPLIED)
+        .order_by()
+        .values_list('attacker')
+        .annotate(total=Sum('damage'))
     )
-    if not totals or (len(totals) > 1 and totals[0]['total'] == totals[1]['total']):
+    blue, red = totals.get(fight.blue_id, 0), totals.get(fight.red_id, 0)
+    if blue == red:
         return None
-    return totals[0]['attacker']
+    return fight.blue_id if blue > red else fight.red_id
+
+
+def killer(fight):
+    last = fight.events.filter(status=FightEvent.Status.APPLIED).order_by('-order').first()
+    return last.attacker_id if last and last.defender_health_after == 0 else None
+
+
+def stopped_winner(fight, order, dead):
+    alive = {fight.blue_id, fight.red_id} - dead
+    if len(alive) == 1:
+        return alive.pop()
+    if order == 0:
+        return None
+    return killer(fight) or damage_winner(fight)
+
+
+def finished_winner(fight):
+    return killer(fight) or damage_winner(fight)
 
 
 @shared_task(
@@ -146,6 +172,7 @@ def simulate_fight(fight_id):
     for event_id in pending.values_list('id', flat=True):
         if not apply_event(event_id):
             break
-    winner = fight_winner(fight)
-    Fight.objects.filter(pk=fight_id).update(status=Fight.Status.DONE, winner_id=winner)
-    return winner
+    if not fight.events.filter(status=FightEvent.Status.SKIPPED).exists():
+        Fight.objects.filter(pk=fight_id).update(winner_id=finished_winner(fight))
+    Fight.objects.filter(pk=fight_id).update(status=Fight.Status.DONE)
+    return Fight.objects.values_list('winner_id', flat=True).get(pk=fight_id)
