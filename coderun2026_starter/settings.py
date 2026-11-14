@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'registry',
 ]
 
 MIDDLEWARE = [
@@ -75,8 +76,12 @@ WSGI_APPLICATION = 'coderun2026_starter.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('POSTGRES_DB', 'coderun'),
+        'USER': os.environ.get('POSTGRES_USER', 'coderun'),
+        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'coderun'),
+        'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
+        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
     }
 }
 
@@ -128,15 +133,22 @@ MAILERS = {
 }
 
 
-CELERY_BROKER_URL = os.environ.get(
-    'CELERY_BROKER_URL',
-    f"sqla+sqlite:///{(BASE_DIR / 'celery_broker.sqlite3').as_posix()}"
-)
-CELERY_RESULT_BACKEND = os.environ.get(
-    'CELERY_RESULT_BACKEND',
-    f"db+sqlite:///{(BASE_DIR / 'celery_results.sqlite3').as_posix()}"
-)
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', f'{REDIS_URL}/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', f'{REDIS_URL}/1')
 CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
 CELERY_ACCEPT_CONTENT = ['json']
-CELERY_WORKER_POOL = 'threads' # workaround for windows
-CELERY_WORKER_CONCURRENCY = 16
+CELERY_RESULT_EXPIRES = 3600
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_WORKER_POOL = 'threads'
+CELERY_WORKER_CONCURRENCY = int(os.environ.get('CELERY_WORKER_CONCURRENCY', '20'))
+
+API_BASE_URL = os.environ.get(
+    'API_BASE_URL',
+    'https://coderun2026-csbwf4haa4d0gubu.westus3-01.azurewebsites.net',
+)
+API_TIMEOUT = float(os.environ.get('API_TIMEOUT', '300'))
+API_BATCHES = range(int(os.environ.get('API_BATCHES', '10')))
