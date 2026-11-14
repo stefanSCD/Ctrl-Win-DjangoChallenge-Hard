@@ -1,60 +1,79 @@
-# CodeRun 2026 – Django Challenge
+# Django War Simulator — Hard
 
-Imports soldiers from the external API, drafts them, downloads their fights and replays every fight in parallel with Celery.
+A Django application that imports people, drafts them in batches, and processes fights provided by the challenge server. Celery runs imports and fights in the background. Application data and the task queue use SQLite, following the starter configuration.
 
-## Requirements
+## Installation
 
-- Python 3.14 with the virtualenv in `.venv`
-- Docker (Postgres and Redis)
+Use Python 3.12 and a virtual environment:
 
-## Run
-
-```powershell
-docker compose up -d
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe manage.py migrate
-
-# terminal 1 – Celery worker (Windows needs the threads pool)
-.venv\Scripts\celery.exe -A coderun2026_starter worker --pool=threads --concurrency=20 --loglevel=info
-
-# terminal 2 – web server
-.venv\Scripts\python.exe manage.py runserver
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python manage.py migrate
 ```
 
-Open http://127.0.0.1:8000/simulate and use the buttons in order:
+The API address is configured by default. Optionally, load the variables from `.env.example` into your terminal before starting the processes:
 
-1. **Import people**: downloads `/people`.
-2. **Draft**: one `download_draft → apply_draft` chain per batch, all batches in parallel; adds rank and health.
-3. **Download fights**: one task per batch, all in parallel; stores fights and their steps.
-4. **Simulate**: one task per pending fight, all in parallel.
-5. **Reset health**: restores health to 100 and marks every fight as pending again.
-
-The page refreshes itself while tasks are running.
-
-## Configuration
-
-Environment variables, all optional:
-
-| Variable | Default |
-| --- | --- |
-| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `coderun` |
-| `POSTGRES_HOST` / `POSTGRES_PORT` | `localhost` / `5432` |
-| `REDIS_URL` | `redis://localhost:6379` (broker db 0, results db 1) |
-| `API_BASE_URL` | the CodeRun 2026 API host |
-| `API_TIMEOUT` | `300` seconds |
-| `API_BATCHES` | `10` |
-
-## Design
-
-- `Person`: API id as primary key; `rank` and `health` are added by a separate migration (`0002`).
-- `Fight`: API `fight_id` as primary key, blue/red soldiers, status and winner (the soldier who dealt more total damage; a tie is a draw).
-- `FightEvent`: one row per step, unique on `(fight, order)` so a retried download never duplicates events. `defender_health_after` records the defender's health after the hit.
-- `Job`: status and attempt count for each download batch, shown on the page.
-- Downloads retry automatically on httpx timeouts, transport errors and 5xx responses with exponential backoff (`autoretry_for`, `retry_backoff`, `max_retries`).
-- Simulation: each hit runs in its own transaction: `UPDATE health = GREATEST(health - damage, 0)` with an `F()` expression, so parallel fights involving the same soldier never lose updates. An event is applied only while its `defender_health_after` is empty (row locked with `select_for_update`), so a retried or redelivered task never applies damage twice.
-
-## Tests
-
-```powershell
-.venv\Scripts\python.exe manage.py test registry
+```bash
+set -a
+source .env.example
+set +a
 ```
+
+Django does not load `.env` files automatically. `CHALLENGE_READ_TIMEOUT` sets the read timeout in seconds. The default is 180 because the server intentionally responds slowly.
+
+## Running the application
+
+In a terminal with the virtual environment activated:
+
+```bash
+python -m celery -A coderun2026_starter worker --loglevel=INFO --concurrency=8
+```
+
+In another terminal, also with the virtual environment activated:
+
+```bash
+python manage.py runserver
+```
+
+Open <http://127.0.0.1:8000/simulate>.
+
+Use a single Celery worker with the local SQLite broker configuration. The worker's thread pool runs tasks concurrently.
+
+## Importing and simulating
+
+Start each stage in order. Commands immediately return a task ID while processing continues in the worker. Follow progress in the worker log or the "Import progress" section on `/simulate`.
+
+```bash
+python manage.py import_people
+```
+
+After the people import completes:
+
+```bash
+python manage.py show_instructions
+python manage.py draft_people
+```
+
+After all drafting batches complete:
+
+```bash
+python manage.py show_instructions
+python manage.py import_fights
+```
+
+Batches follow `next_batch` until it is `null`. Each stage requires the previous stage to be complete. Successful imports are retained; running a command again resumes the chain using batches that have already been downloaded.
+
+Once the fight import completes, click "Simulate unfinished fights" on `/simulate`. Each fight receives its own Celery task. The page refreshes during simulation and displays events and the defender's health after each attack.
+
+Clicking the button again does not duplicate tasks that are already queued. Failed fights can be resumed using the same button; previously processed events do not apply additional damage. If the worker is forcibly stopped, a task may remain "queued" or "running". Check the log before restarting it. This version does not include a separate service that automatically detects abandoned tasks.
+
+Host: `https://coderun2026-csbwf4haa4d0gubu.westus3-01.azurewebsites.net`.
+
+- `/people`: people with `id`, `name`, `age`, and optionally `key`.
+- `/draft-info`: drafting instructions.
+- `/draft/<batch>`: people's rank and health, plus `next_batch`.
+- `/fight-info`: fight import instructions.
+- `/fight/<batch>`: fights and events, plus `next_batch`.
+- `/simulate-fight-info`: simulation page requirements.
