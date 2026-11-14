@@ -1,73 +1,77 @@
 # Django War Simulator — Hard
 
-A Django application that imports people, drafts them in batches, and processes fights provided by the challenge server. Celery runs imports and fights in the background. Application data and the task queue use SQLite, following the starter configuration.
+A Django application that imports people, drafts them in batches, and processes fights provided by the challenge server. Celery runs imports and fights in the background. Application data is stored in PostgreSQL and Redis is used as the Celery broker and result backend. Both run in Docker.
 
 ## Installation
 
-Use Python 3.12 and a virtual environment:
+Requirements: Python 3.12+, Docker Desktop.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
+Start PostgreSQL and Redis:
+
+```powershell
+docker compose up -d
+```
+
+Create a virtual environment and apply the migrations:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 python -m pip install -r requirements.txt
 python manage.py migrate
 ```
 
-The API address is configured by default. Optionally, load the variables from `.env.example` into your terminal before starting the processes:
-
-```bash
-set -a
-source .env.example
-set +a
-```
-
-Django does not load `.env` files automatically. `CHALLENGE_READ_TIMEOUT` sets the read timeout in seconds. The default is 180 because the server intentionally responds slowly.
+All settings have local defaults matching `docker-compose.yml`. They can be overridden with environment variables: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`, `REDIS_URL`, `API_BASE_URL`, `API_TIMEOUT` (read timeout in seconds, default 300, because the server intentionally responds slowly), `API_BATCHES` (default 10) and `CELERY_WORKER_CONCURRENCY` (default 20).
 
 ## Running the application
 
 In a terminal with the virtual environment activated:
 
-```bash
-python -m celery -A coderun2026_starter worker --loglevel=INFO --concurrency=8
+```powershell
+celery -A coderun2026_starter worker --pool=threads --concurrency=20 --loglevel=info
 ```
 
 In another terminal, also with the virtual environment activated:
 
-```bash
+```powershell
 python manage.py runserver
 ```
 
 Open <http://127.0.0.1:8000/simulate>.
 
-Use a single Celery worker with the local SQLite broker configuration. The worker's thread pool runs tasks concurrently.
+The worker uses a thread pool because the default prefork pool is not supported on Windows. Tasks are I/O bound, so threads run them concurrently.
 
 ## Importing and simulating
 
-Start each stage in order. Commands immediately return a task ID while processing continues in the worker. Follow progress in the worker log or the "Import progress" section on `/simulate`.
+Use the buttons on `/simulate` in order. Each button starts background tasks and returns immediately. Progress is shown on the page, which refreshes on its own while tasks are running, and in the worker log.
 
-```bash
-python manage.py import_people
-```
+1. **Import people** downloads `/people`.
+2. **Draft** starts one task chain per batch, all in parallel. Each chain downloads `/draft/<batch>` and, as soon as that batch is downloaded, applies the rank and health to the people in it.
+3. **Download fights** downloads every `/fight/<batch>` in parallel and stores each fight and each of its events.
+4. **Simulate** starts one Celery task per fight, all in parallel. Each task replays its fight event by event and decreases the defender's health.
 
-After the people import completes:
+Each stage requires the previous one to be complete; the buttons are disabled until then. **Reset health** restores every soldier to full health and clears fight results so the simulation can be replayed.
 
-```bash
-python manage.py show_instructions
-python manage.py draft_people
-```
+Download tasks retry automatically with exponential backoff and jitter (up to 6 retries) on timeouts, connection errors, HTTP 5xx and 429. Other errors, such as an invalid batch id, fail immediately and are shown on the page.
 
-After all drafting batches complete:
+## Simulation rules
 
-```bash
-python manage.py show_instructions
-python manage.py import_fights
-```
+- Events of a fight are applied in order. Fights run in parallel, and the same soldier can take part in several fights at once.
+- Each event locks both soldiers (`SELECT ... FOR UPDATE`, always in ascending id order to avoid deadlocks), checks their health and applies the damage in a single transaction, so concurrent fights never lose or double an update. Health never drops below 0.
+- A fight stops as soon as one of its soldiers is at 0 HP, either from this fight or from another one. The remaining events are marked as skipped.
+- Winner: the soldier still alive when the other one is at 0 HP. If both are alive at the end, the soldier who dealt more damage in this fight wins; equal damage is a draw.
+- Re-running a task never applies an event twice, because each event keeps its own status.
 
-Batches follow `next_batch` until it is `null`. Each stage requires the previous stage to be complete. Successful imports are retained; running a command again resumes the chain using batches that have already been downloaded.
+Because fights run concurrently, the order in which shared soldiers lose health can differ between runs, so individual results may vary slightly.
 
-Once the fight import completes, click "Simulate unfinished fights" on `/simulate`. Each fight receives its own Celery task. The page refreshes during simulation and displays events and the defender's health after each attack.
+## Data model
 
-Clicking the button again does not duplicate tasks that are already queued. Failed fights can be resumed using the same button; previously processed events do not apply additional damage. If the worker is forcibly stopped, a task may remain "queued" or "running". Check the log before restarting it. This version does not include a separate service that automatically detects abandoned tasks.
+- `Person`: id from the API, name, age, key, rank and health (rank and health added by a separate migration for drafting).
+- `Job`: one row per import batch with its status, attempts and last error.
+- `Fight`: blue and red soldier, batch, status and winner.
+- `FightEvent`: position in the fight, attacker, defender, damage, defender health after the hit and status (pending, applied or skipped).
+
+## API
 
 Host: `https://coderun2026-csbwf4haa4d0gubu.westus3-01.azurewebsites.net`.
 
