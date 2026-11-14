@@ -9,6 +9,9 @@ from .models import Fight, FightEvent, Job, Person
 
 def simulate(request):
     if request.method == 'POST':
+        if not services.stage_done(Job.Kind.FIGHTS):
+            messages.error(request, 'Download all fight batches before simulating.')
+            return redirect('simulate')
         count = services.start_simulation()
         messages.info(request, f'Simulation started for {count} fights.')
         return redirect('simulate')
@@ -39,6 +42,9 @@ def simulate(request):
         'fight_status': fight_status,
         'alive': people.filter(health__gt=0).count(),
         'active': active,
+        'can_draft': services.stage_done(Job.Kind.PEOPLE),
+        'can_download_fights': services.stage_done(Job.Kind.DRAFT),
+        'can_simulate': services.stage_done(Job.Kind.FIGHTS),
     })
 
 
@@ -51,6 +57,9 @@ def import_people(request):
 
 @require_POST
 def draft(request):
+    if not services.stage_done(Job.Kind.PEOPLE):
+        messages.error(request, 'Import people before drafting.')
+        return redirect('simulate')
     services.start_draft()
     messages.info(request, 'Drafting started.')
     return redirect('simulate')
@@ -58,6 +67,9 @@ def draft(request):
 
 @require_POST
 def download_fights(request):
+    if not services.stage_done(Job.Kind.DRAFT):
+        messages.error(request, 'Finish drafting all batches before downloading fights.')
+        return redirect('simulate')
     services.start_fights_download()
     messages.info(request, 'Fight download started.')
     return redirect('simulate')

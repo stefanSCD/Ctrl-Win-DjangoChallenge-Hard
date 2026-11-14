@@ -14,7 +14,8 @@
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .actions form { margin: 0; }
     button { padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; font: inherit; }
-    button:hover { background: #f3f4f6; }
+    button:hover:not(:disabled) { background: #f3f4f6; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
     button.primary { background: #111827; border-color: #111827; color: #fff; }
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
     .card { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -52,9 +53,9 @@
 
   <div class="actions">
     <form method="post" action="{% url 'import-people' %}">{% csrf_token %}<button>1. Import people</button></form>
-    <form method="post" action="{% url 'draft' %}">{% csrf_token %}<button>2. Draft</button></form>
-    <form method="post" action="{% url 'download-fights' %}">{% csrf_token %}<button>3. Download fights</button></form>
-    <form method="post" action="{% url 'simulate' %}">{% csrf_token %}<button class="primary">4. Simulate</button></form>
+    <form method="post" action="{% url 'draft' %}">{% csrf_token %}<button {% if not can_draft %}disabled title="Import people first"{% endif %}>2. Draft</button></form>
+    <form method="post" action="{% url 'download-fights' %}">{% csrf_token %}<button {% if not can_download_fights %}disabled title="Finish drafting first"{% endif %}>3. Download fights</button></form>
+    <form method="post" action="{% url 'simulate' %}">{% csrf_token %}<button class="primary" {% if not can_simulate %}disabled title="Download all fights first"{% endif %}>4. Simulate</button></form>
     <form method="post" action="{% url 'reset-health' %}">{% csrf_token %}<button>Reset health</button></form>
   </div>
 

@@ -11,6 +11,11 @@ def reset_jobs(kind, batches):
     Job.objects.bulk_create([Job(kind=kind, batch=batch) for batch in batches])
 
 
+def stage_done(kind):
+    jobs = Job.objects.filter(kind=kind)
+    return jobs.exists() and not jobs.exclude(status=Job.Status.DONE).exists()
+
+
 def start_people_import():
     reset_jobs(Job.Kind.PEOPLE, [0])
     import_people.delay()
