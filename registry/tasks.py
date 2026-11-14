@@ -1,6 +1,7 @@
 from celery import Task, shared_task
-from django.db import transaction
-from django.db.models import F
+from django.db import OperationalError, transaction
+from django.db.models import F, Sum
+from django.db.models.functions import Greatest
 
 from . import api
 from .models import Fight, FightEvent, Job, Person
@@ -93,3 +94,43 @@ def download_fights(self, batch):
         FightEvent.objects.bulk_create(events, ignore_conflicts=True)
     finish_job(Job.Kind.FIGHTS, batch)
     return len(fights)
+
+
+def apply_event(event_id):
+    with transaction.atomic():
+        event = (
+            FightEvent.objects.select_for_update()
+            .filter(pk=event_id, defender_health_after__isnull=True)
+            .first()
+        )
+        if event is None:
+            return
+        defender = Person.objects.filter(pk=event.defender_id)
+        defender.update(health=Greatest(F('health') - event.damage, 0))
+        event.defender_health_after = defender.values_list('health', flat=True).get()
+        event.save(update_fields=['defender_health_after'])
+
+
+def fight_winner(fight):
+    totals = list(
+        fight.events.values('attacker').annotate(total=Sum('damage')).order_by('-total')
+    )
+    if not totals or (len(totals) > 1 and totals[0]['total'] == totals[1]['total']):
+        return None
+    return totals[0]['attacker']
+
+
+@shared_task(
+    autoretry_for=(OperationalError,), retry_backoff=1, retry_jitter=True, max_retries=5
+)
+def simulate_fight(fight_id):
+    fight = Fight.objects.get(pk=fight_id)
+    if fight.status == Fight.Status.DONE:
+        return fight.winner_id
+    Fight.objects.filter(pk=fight_id).update(status=Fight.Status.RUNNING)
+    pending = fight.events.filter(defender_health_after__isnull=True).order_by('order')
+    for event_id in pending.values_list('id', flat=True):
+        apply_event(event_id)
+    winner = fight_winner(fight)
+    Fight.objects.filter(pk=fight_id).update(status=Fight.Status.DONE, winner_id=winner)
+    return winner

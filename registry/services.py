@@ -1,8 +1,9 @@
 from celery import chain, group
 from django.conf import settings
+from django.db import transaction
 
-from .models import Job
-from .tasks import apply_draft, download_draft, download_fights, import_people
+from .models import Fight, FightEvent, Job, Person
+from .tasks import apply_draft, download_draft, download_fights, import_people, simulate_fight
 
 
 def reset_jobs(kind, batches):
@@ -25,3 +26,21 @@ def start_fights_download():
     batches = settings.API_BATCHES
     reset_jobs(Job.Kind.FIGHTS, batches)
     group(download_fights.s(batch) for batch in batches).apply_async()
+
+
+def start_simulation():
+    with transaction.atomic():
+        pending = Fight.objects.select_for_update().filter(status=Fight.Status.PENDING)
+        fight_ids = list(pending.values_list('id', flat=True))
+        Fight.objects.filter(id__in=fight_ids).update(status=Fight.Status.RUNNING)
+    transaction.on_commit(
+        lambda: group(simulate_fight.s(fight_id) for fight_id in fight_ids).apply_async()
+    )
+    return len(fight_ids)
+
+
+@transaction.atomic
+def reset_health():
+    Person.objects.update(health=Person.MAX_HEALTH)
+    FightEvent.objects.update(defender_health_after=None)
+    Fight.objects.update(status=Fight.Status.PENDING, winner=None)
