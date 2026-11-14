@@ -42,5 +42,5 @@ def start_simulation():
 @transaction.atomic
 def reset_health():
     Person.objects.update(health=Person.MAX_HEALTH)
-    FightEvent.objects.update(defender_health_after=None)
+    FightEvent.objects.update(defender_health_after=None, status=FightEvent.Status.PENDING)
     Fight.objects.update(status=Fight.Status.PENDING, winner=None)

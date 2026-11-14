@@ -76,12 +76,18 @@ class Fight(models.Model):
 
 
 class FightEvent(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending'
+        APPLIED = 'applied'
+        SKIPPED = 'skipped'
+
     fight = models.ForeignKey(Fight, on_delete=models.CASCADE, related_name='events')
     order = models.PositiveSmallIntegerField()
     attacker = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='attacks')
     defender = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='defenses')
     damage = models.PositiveSmallIntegerField()
     defender_health_after = models.PositiveSmallIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status, default=Status.PENDING)
 
     class Meta:
         ordering = ['fight', 'order']

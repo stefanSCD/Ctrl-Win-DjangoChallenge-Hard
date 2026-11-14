@@ -100,15 +100,29 @@ def apply_event(event_id):
     with transaction.atomic():
         event = (
             FightEvent.objects.select_for_update()
-            .filter(pk=event_id, defender_health_after__isnull=True)
+            .filter(pk=event_id, status=FightEvent.Status.PENDING)
             .first()
         )
         if event is None:
-            return
+            return not FightEvent.objects.filter(
+                pk=event_id, status=FightEvent.Status.SKIPPED
+            ).exists()
+        fighters = (
+            Person.objects.select_for_update()
+            .filter(pk__in=[event.attacker_id, event.defender_id])
+            .order_by('pk')
+        )
+        if any(person.health == 0 for person in fighters):
+            FightEvent.objects.filter(
+                fight_id=event.fight_id, order__gte=event.order, status=FightEvent.Status.PENDING
+            ).update(status=FightEvent.Status.SKIPPED)
+            return False
         defender = Person.objects.filter(pk=event.defender_id)
         defender.update(health=Greatest(F('health') - event.damage, 0))
         event.defender_health_after = defender.values_list('health', flat=True).get()
-        event.save(update_fields=['defender_health_after'])
+        event.status = FightEvent.Status.APPLIED
+        event.save(update_fields=['defender_health_after', 'status'])
+        return True
 
 
 def fight_winner(fight):
@@ -128,9 +142,10 @@ def simulate_fight(fight_id):
     if fight.status == Fight.Status.DONE:
         return fight.winner_id
     Fight.objects.filter(pk=fight_id).update(status=Fight.Status.RUNNING)
-    pending = fight.events.filter(defender_health_after__isnull=True).order_by('order')
+    pending = fight.events.filter(status=FightEvent.Status.PENDING).order_by('order')
     for event_id in pending.values_list('id', flat=True):
-        apply_event(event_id)
+        if not apply_event(event_id):
+            break
     winner = fight_winner(fight)
     Fight.objects.filter(pk=fight_id).update(status=Fight.Status.DONE, winner_id=winner)
     return winner
