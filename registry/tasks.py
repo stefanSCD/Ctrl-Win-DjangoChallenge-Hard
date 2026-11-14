@@ -1,8 +1,9 @@
 from celery import Task, shared_task
+from django.db import transaction
 from django.db.models import F
 
 from . import api
-from .models import Job, Person
+from .models import Fight, FightEvent, Job, Person
 
 RETRY_POLICY = {
     'autoretry_for': api.RETRYABLE_ERRORS,
@@ -64,3 +65,31 @@ def apply_draft(self, result):
     upsert_people(result['rows'], ['name', 'age', 'key', 'rank', 'health'])
     finish_job(Job.Kind.DRAFT, result['batch'])
     return len(result['rows'])
+
+
+@shared_task(bind=True, base=JobTask, job_kind=Job.Kind.FIGHTS, **RETRY_POLICY)
+def download_fights(self, batch):
+    self.start_job(batch)
+    rows = api.fetch_fights(batch)
+    fights = [
+        Fight(id=row['fight_id'], batch=batch, blue_id=row['blue_soldier_id'], red_id=row['red_soldier_id'])
+        for row in rows
+    ]
+    events = [
+        FightEvent(
+            fight_id=row['fight_id'],
+            order=order,
+            attacker_id=step['attacker'],
+            defender_id=step['defender'],
+            damage=step['damage'],
+        )
+        for row in rows
+        for order, step in enumerate(row['steps'])
+    ]
+    with transaction.atomic():
+        Fight.objects.bulk_create(
+            fights, update_conflicts=True, unique_fields=['id'], update_fields=['batch', 'blue', 'red']
+        )
+        FightEvent.objects.bulk_create(events, ignore_conflicts=True)
+    finish_job(Job.Kind.FIGHTS, batch)
+    return len(fights)

@@ -51,3 +51,43 @@ class Job(models.Model):
 
     def __str__(self):
         return f'{self.kind}[{self.batch}] {self.status}'
+
+
+class Fight(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending'
+        RUNNING = 'running'
+        DONE = 'done'
+
+    id = models.PositiveIntegerField(primary_key=True)
+    batch = models.PositiveSmallIntegerField(db_index=True)
+    blue = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='blue_fights')
+    red = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='red_fights')
+    status = models.CharField(max_length=10, choices=Status, default=Status.PENDING, db_index=True)
+    winner = models.ForeignKey(
+        Person, on_delete=models.SET_NULL, null=True, blank=True, related_name='won_fights'
+    )
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        return f'Fight {self.id}: {self.blue} vs {self.red}'
+
+
+class FightEvent(models.Model):
+    fight = models.ForeignKey(Fight, on_delete=models.CASCADE, related_name='events')
+    order = models.PositiveSmallIntegerField()
+    attacker = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='attacks')
+    defender = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='defenses')
+    damage = models.PositiveSmallIntegerField()
+    defender_health_after = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['fight', 'order']
+        constraints = [
+            models.UniqueConstraint(fields=['fight', 'order'], name='unique_event_fight_order'),
+        ]
+
+    def __str__(self):
+        return f'{self.fight_id}#{self.order}: {self.attacker_id} -> {self.defender_id} ({self.damage})'
