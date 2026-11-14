@@ -17,7 +17,8 @@ class JobTask(Task):
     job_kind = None
 
     def job_batch(self, args, kwargs):
-        return args[0] if args else kwargs.get('batch', 0)
+        value = args[0] if args else kwargs.get('batch', 0)
+        return value['batch'] if isinstance(value, dict) else value
 
     def start_job(self, batch):
         Job.objects.filter(kind=self.job_kind, batch=batch).update(
@@ -50,3 +51,16 @@ def import_people(self):
     upsert_people(rows, ['name', 'age', 'key'])
     finish_job(Job.Kind.PEOPLE, 0)
     return len(rows)
+
+
+@shared_task(bind=True, base=JobTask, job_kind=Job.Kind.DRAFT, **RETRY_POLICY)
+def download_draft(self, batch):
+    self.start_job(batch)
+    return {'batch': batch, 'rows': api.fetch_draft(batch)}
+
+
+@shared_task(bind=True, base=JobTask, job_kind=Job.Kind.DRAFT)
+def apply_draft(self, result):
+    upsert_people(result['rows'], ['name', 'age', 'key', 'rank', 'health'])
+    finish_job(Job.Kind.DRAFT, result['batch'])
+    return len(result['rows'])

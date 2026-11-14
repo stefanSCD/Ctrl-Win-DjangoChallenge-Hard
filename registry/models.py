@@ -2,10 +2,20 @@ from django.db import models
 
 
 class Person(models.Model):
+    class Rank(models.TextChoices):
+        PRIVATE = 'Private'
+        SERGEANT = 'Sergeant'
+        LIEUTENANT = 'Lieutenant'
+        GENERAL = 'General'
+
+    MAX_HEALTH = 100
+
     id = models.PositiveIntegerField(primary_key=True)
     name = models.CharField(max_length=200)
     age = models.PositiveSmallIntegerField()
     key = models.CharField(max_length=100, null=True, blank=True)
+    rank = models.CharField(max_length=20, choices=Rank, null=True, blank=True)
+    health = models.PositiveSmallIntegerField(default=MAX_HEALTH)
 
     class Meta:
         ordering = ['id']
