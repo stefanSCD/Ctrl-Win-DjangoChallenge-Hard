@@ -34,6 +34,7 @@
     .step { padding: 1px 6px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
     .step.blue { background: #dbeafe; }
     .step.red { background: #fee2e2; }
+    .step.skipped { background: var(--line); color: var(--muted); font-weight: 400; text-decoration: line-through; }
     .bar { width: 100px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
     .bar span { display: block; height: 100%; background: #16a34a; }
     .dead { color: var(--red); }
@@ -99,8 +100,8 @@
             <td>
               <div class="steps">
                 {% for event in fight.events.all %}
-                  <span class="step {% if event.attacker_id == fight.blue_id %}blue{% else %}red{% endif %}" title="{% if event.attacker_id == fight.blue_id %}{{ fight.blue.name }}{% else %}{{ fight.red.name }}{% endif %} hits for {{ event.damage }}">
-                    −{{ event.damage }}{% if event.defender_health_after is not None %} → {{ event.defender_health_after }}{% endif %}
+                  <span class="step {% if event.attacker_id == fight.blue_id %}blue{% else %}red{% endif %}{% if event.status == 'skipped' %} skipped{% endif %}" title="{% if event.attacker_id == fight.blue_id %}{{ fight.blue.name }}{% else %}{{ fight.red.name }}{% endif %} hits for {{ event.damage }}">
+                    −{{ event.damage }}{% if event.status == 'skipped' %} skipped{% elif event.defender_health_after is not None %} → {{ event.defender_health_after }}{% endif %}
                   </span>
                 {% endfor %}
               </div>
